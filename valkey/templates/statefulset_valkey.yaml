@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: cache
+  name: cache
+  namespace: valkey
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: valkey
+  serviceName: valkey-headless
+  template:
+    metadata:
+      labels:
+        app: valkey
+    spec:
+      containers:
+        - image: valkey/valkey
+          name: valkey
+          ports:
+            - containerPort: 6379
+              protocol: TCP
+          volumeMounts:
+            - name: valkey-data
+              mountPath: /var/lib/valkey
+        - image: valkey/valkey
+          name: valkey-sentinel
+          command: ["/bin/sh", "/etc/valkey-readonly/start.sh"]
+          volumeMounts:
+            - name: startup-script
+              mountPath: /etc/valkey-readonly
+            - name: sentinel-data
+              mountPath: /var/lib/sentinel
+          ports:
+            - containerPort: 26379
+              protocol: TCP
+      volumes:
+        - name: startup-script
+          configMap:
+            name: valkey-startup-script
+        - name: valkey-data
+          emptyDir: {}
+        - name: sentinel-data
+          emptyDir: {}
