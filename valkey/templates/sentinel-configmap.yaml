@@ -5,9 +5,8 @@ metadata:
   namespace: valkey
 data:
   start.sh: |
-    #!/binsh
-    set -e
-  
+    #!/bin/sh
+
     STS_NAME="cache"
     NAMESPACE="valkey"
     HEADLESS_SERVICE="valkey-headless"
@@ -15,83 +14,18 @@ data:
     MASTER_NAME="mymaster"
     DB_PORT="6379"
     SENTINEL_PORT="26379"
-    
+
     WRITABLE_DATA_DIR="/var/lib/sentinel"
     WRITABLE_SENTINEL_CONF="$WRITABLE_DATA_DIR/sentinel.conf"
-    
+
     MY_FQDN="${HOSTNAME}.${HEADLESS_SERVICE}.${NAMESPACE}.svc.cluster.local"
-    
-    echo "Waiting for my own DNS to be ready ($MY_FQDN)..."
-    until getent hosts "$MY_FQDN"; do
-      echo "My DNS not resolvable yet. Retrying in 1 second..."
-      sleep 1
-    done
-    
-    PRIMARY_HOST=""
-    PRIMARY_PORT=""
 
-    echo "Checking for persisted sentinel config at $WRITABLE_SENTINEL_CONF..."
-    if [ -f "$WRITABLE_SENTINEL_CONF" ]; then
-        PRIMARY_HOST=$(awk '/^sentinel monitor/ {print $4}' "$WRITABLE_SENTINEL_CONF")
-        PRIMARY_PORT=$(awk '/^sentinel monitor/ {print $5}' "$WRITABLE_SENTINEL_CONF")
-        
-        if [ -n "$PRIMARY_HOST" ]; then
-          echo "Found persisted primary in config: ${PRIMARY_HOST}:${PRIMARY_PORT}"
-        fi
-    fi
+    wait_for_dns() {
+      until getent hosts ${MY_FQDN}; do
+        echo "Waiting for DNS to resolve ${MY_FQDN}..."
+        sleep 1
+      done
+    }
 
-    if [ -z "$PRIMARY_HOST" ]; then
-        echo "No persisted primary. Trying to discover from cluster..."
-        
-        PRIMARY_INFO=$(timeout 5 valkey-cli -h "${HEADLESS_SERVICE}" -p "${SENTINEL_PORT}" \
-          SENTINEL get-primary-addr-by-name "${MASTER_NAME}" 2>/dev/null || true)
-          
-        if [ -n "$PRIMARY_INFO" ]; then
-            PRIMARY_HOST=$(echo "$PRIMARY_INFO" | sed -n '1p')
-            PRIMARY_PORT=$(echo "$PRIMARY_INFO" | sed -n '2p')
-            echo "Found existing primary via Sentinel: ${PRIMARY_HOST}:${PRIMARY_PORT}"
-        fi
-    fi
-
-    if [ -z "$PRIMARY_HOST" ]; then
-        echo "No primary found. Assuming I am the primary."
-        PRIMARY_HOST="${MY_FQDN}"
-        PRIMARY_PORT="${DB_PORT}"
-    fi
+    wait_for_dns ${MY_FQDN}
     
-    DB_START_CMD="valkey-server --port ${DB_PORT}"
-    
-    if [ "$PRIMARY_HOST" = "$MY_FQDN" ]; then
-        echo "Starting Valkey database as PRIMARY."
-    else
-        echo "Starting Valkey database as REPLICA of ${PRIMARY_HOST}:${PRIMARY_PORT}"
-        DB_START_CMD="${DB_START_CMD} --replica-of ${PRIMARY_HOST} ${PRIMARY_PORT}"
-    fi
-    
-    echo "Creating Sentinel config at $WRITABLE_SENTINEL_CONF..."
-    mkdir -p "${WRITABLE_DATA_DIR}"
-    
-    cat <<EOF > "${WRITABLE_SENTINEL_CONF}"
-    port ${SENTINEL_PORT}
-    sentinel monitor ${MASTER_NAME} ${PRIMARY_HOST} ${PRIMARY_PORT} 2
-    sentinel down-after-milliseconds ${MASTER_NAME} 30000
-    sentinel failover-timeout ${MASTER_NAME} 180000
-    sentinel parallel-syncs ${MASTER_NAME} 1
-    dir "${WRITABLE_DATA_DIR}"
-    EOF
-    
-    echo "Discovering peers..."
-    for i in $(seq 0 $(($REPLICAS - 1))); do
-      PEER_HOST="${STS_NAME}-${i}.${HEADLESS_SERVICE}.${NAMESPACE}.svc.cluster.local"
-      if [ "$PEER_HOST" = "$MY_FQDN" ]; then continue; fi
-      PEER_IP=$(getent hosts "$PEER_HOST" | awk '{ print $1 }')
-      if [ -n "$PEER_IP" ]; then
-        echo "Adding known-sentinel: $PEER_HOST"
-        echo "sentinel known-sentinel ${MASTER_NAME} ${PEER_HOST} ${SENTINEL_PORT}" >> "${WRITABLE_SENTINEL_CONF}"
-      else
-        echo "Peer $PEER_HOST is not resolvable yet, skipping."
-      fi
-    done
-    
-    echo "Starting Sentinel..."
-    exec valkey-server "${WRITABLE_SENTINEL_CONF}" --sentinel
