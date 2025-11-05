@@ -19,15 +19,29 @@ spec:
       containers:
         - image: valkey/valkey
           name: valkey
+          command: ["/bin/sh", "/etc/valkey-readonly/start-valkey.sh"]
           ports:
             - containerPort: 6379
               protocol: TCP
           volumeMounts:
+            - name: startup-script
+              mountPath: /etc/valkey-readonly
             - name: valkey-data
               mountPath: /var/lib/valkey
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            timeoutSeconds: 2
+            periodSeconds: 2
+          startupProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            failureThreshold: 30
+            timeoutSeconds: 2
+            periodSeconds: 2
         - image: valkey/valkey
           name: valkey-sentinel
-          command: ["/bin/sh", "/etc/valkey-readonly/start.sh"]
+          command: ["/bin/sh", "/etc/valkey-readonly/start-sentinel.sh"]
           volumeMounts:
             - name: startup-script
               mountPath: /etc/valkey-readonly

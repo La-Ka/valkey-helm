@@ -4,7 +4,7 @@ metadata:
   name: valkey-startup-script
   namespace: valkey
 data:
-  start.sh: |
+  start-sentinel.sh: |
     #!/bin/sh
 
     STS_NAME="cache"
@@ -19,6 +19,7 @@ data:
     WRITABLE_SENTINEL_CONF="$WRITABLE_DATA_DIR/sentinel.conf"
 
     MY_FQDN="${HOSTNAME}.${HEADLESS_SERVICE}.${NAMESPACE}.svc.cluster.local"
+    DEFAULT_MASTER_FQDN="${STS_NAME}-0.${HEADLESS_SERVICE}.${NAMESPACE}.svc.cluster.local"
 
     wait_for_dns() {
       until getent hosts ${MY_FQDN}; do
@@ -27,5 +28,25 @@ data:
       done
     }
 
+    setup_sentinel() {
+
+    SENTINEL_CONFIG=$(cat <<EOF
+    sentinel monitor ${MASTER_NAME} ${DEFAULT_MASTER_FQDN} 6379 2
+    sentinel down-after-milliseconds ${MASTER_NAME} 60000
+    sentinel failover-timeout ${MASTER_NAME} 180000
+    sentinel parallel-syncs ${MASTER_NAME} 1
+    sentinel announce-hostnames yes
+    sentinel resolve-hostnames yes
+    EOF
+    )
+
+      echo "${SENTINEL_CONFIG}" > ${WRITABLE_SENTINEL_CONF}
+
+      valkey-server ${WRITABLE_SENTINEL_CONF} --sentinel 
+    }
+
     wait_for_dns ${MY_FQDN}
-    
+    setup_sentinel
+  start-valkey.sh: |
+    #!/bin/sh
+
