@@ -19,13 +19,15 @@ spec:
       containers:
         - image: valkey/valkey
           name: valkey
-          command: ["/bin/sh", "/etc/valkey-readonly/start-valkey.sh"]
+          command: ["/bin/sh", "/etc/valkey-readonly/startup/start-valkey.sh"]
           ports:
             - containerPort: 6379
               protocol: TCP
           volumeMounts:
             - name: startup-script
-              mountPath: /etc/valkey-readonly
+              mountPath: /etc/valkey-readonly/startup
+            - name: valkey-config
+              mountPath: /etc/valkey-readonly/config
             - name: valkey-data
               mountPath: /var/lib/valkey
           readinessProbe:
@@ -41,10 +43,10 @@ spec:
             periodSeconds: 2
         - image: valkey/valkey
           name: valkey-sentinel
-          command: ["/bin/sh", "/etc/valkey-readonly/start-sentinel.sh"]
+          command: ["/bin/sh", "/etc/valkey-readonly/startup/start-sentinel.sh"]
           volumeMounts:
             - name: startup-script
-              mountPath: /etc/valkey-readonly
+              mountPath: /etc/valkey-readonly/startup
             - name: sentinel-data
               mountPath: /var/lib/sentinel
           ports:
@@ -54,6 +56,9 @@ spec:
         - name: startup-script
           configMap:
             name: valkey-startup-script
+        - name: valkey-config
+          configMap:
+            name: valkey-config
         - name: valkey-data
           emptyDir: {}
         - name: sentinel-data

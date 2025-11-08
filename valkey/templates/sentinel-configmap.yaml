@@ -40,45 +40,62 @@ data:
     EOF
     )
 
-      echo "${SENTINEL_CONFIG}" > ${WRITABLE_SENTINEL_CONF}
+      printf '%s' "${SENTINEL_CONFIG}" > "${WRITABLE_SENTINEL_CONF}"
 
-      valkey-server ${WRITABLE_SENTINEL_CONF} --sentinel
+      exec valkey-server "${WRITABLE_SENTINEL_CONF}" --sentinel
     }
 
     wait_for_dns ${MY_FQDN}
     setup_sentinel
+
   start-valkey.sh: |
     #!/bin/sh
 
     LOCALHOST="127.0.0.1"
     SENTINEL_PORT=26379
+    VALKEY_PORT=6379
+    STS_NAME="cache"
+    NAMESPACE="valkey"
+    HEADLESS_SERVICE="valkey-headless"
     MASTER_NAME="mymaster"
 
     MY_FQDN="${HOSTNAME}.${HEADLESS_SERVICE}.${NAMESPACE}.svc.cluster.local"
 
+    WRITABLE_DATA_DIR="/var/lib/valkey"
+    WRITABLE_VALKEY_CONF="${WRITABLE_DATA_DIR}/valkey.conf"
+
     get_master() {
-      echo "Run sentinel command"
       out="$(valkey-cli -h ${LOCALHOST} -p ${SENTINEL_PORT} SENTINEL get-master-addr-by-name ${MASTER_NAME} 2>/dev/null || true)"
+
+      printf '%s\n' "${out}" | awk 'NR==1 {print $1}'
     }
 
     wait_for_sentinel() {
 
-      until valkey-cli -h ${LOCALHOST} -p ${SENTINEL_PORT} PING > /dev/null 2>&1; do
+      until valkey-cli -h "${LOCALHOST}" -p "${SENTINEL_PORT}" PING > /dev/null 2>&1; do
         echo "Waiting for Sentinel to be available..."
         sleep 1
       done
     
     }
 
+    setup_valkey() {
+      PRIMARY_HOST=$1
+
+      cp /etc/valkey-readonly/config/valkey.conf "${WRITABLE_VALKEY_CONF}"
+
+      if [ "${PRIMARY_HOST}" != "${MY_FQDN}" ]; then
+        echo "replicaof ${PRIMARY_HOST} ${VALKEY_PORT}" >> "${WRITABLE_VALKEY_CONF}"
+      fi
+
+      exec valkey-server "${WRITABLE_VALKEY_CONF}"
+    }
+
+
     wait_for_sentinel
-    CURRENT_MASTER=$(get_master)
-
-    # if [ ${CURRENT_MASTER} = ${MY_FQDN} ]; then
-    #   echo "This node is the master."
-    #   valkey-cli REPLICAOF NO ONE
-    # else
-    #   echo "This node is a replica. Configuring replication to master at ${CURRENT_MASTER}."
-    #   valkey-cli REPLICAOF ${CURRENT_MASTER} ${DB_PORT}
-    # fi
-
-    valkey-server
+    CURRENT_MASTER="$(get_master)"
+    
+    echo "Current master is at ${CURRENT_MASTER}"
+    echo "My FQDN is ${MY_FQDN}"
+    
+    setup_valkey "${CURRENT_MASTER}"
